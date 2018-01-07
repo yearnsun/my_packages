@@ -1,0 +1,12 @@
+msgid "Processor"
+msgstr "处理器"
+
+msgid "Architecture"
+msgstr "架构"
+
+msgid "CPU Info"
+msgstr "CPU信息"
+
+msgid "CPU Temperature"
+msgstr "CPU温度"
+

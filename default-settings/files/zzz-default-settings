@@ -1,0 +1,98 @@
+#!/bin/sh
+
+uci set luci.main.lang=zh_cn
+uci commit luci
+
+uci set aria2.main.enabled=1
+uci set aria2.main.dir=/mnt/sdb1/Aria2Downloads
+uci set aria2.main.disk_cache=32M
+uci set aria2.main.max_connection_per_server=16
+uci add_list aria2.main.extra_settings=check-certificate=false
+uci set aria2.main.enable_log=false
+uci set aria2.main.file_allocation=prealloc
+uci set aria2.main.rpc_auth_method=token
+uci set aria2.main.rpc_secret=rpp9lerpq4m5owwn2mb8kt9ccxk6r6xd
+uci set aria2.main.split=16
+uci commit aria2
+
+uci set bandwidthd.@bandwidthd[0].subnets=192.168.10.0/24
+uci set bandwidthd.@bandwidthd[0].sqlite_filename=/mnt/sdb1/bandwidthd/stats.db
+uci commit bandwidthd
+
+uci set ddns.myddns_ipv4.enabled=1
+uci set ddns.myddns_ipv4.ip_source=network
+uci set ddns.myddns_ipv4.service_name=3322.org
+uci set ddns.myddns_ipv4.lookup_host=yearnsun.3322.org
+uci set ddns.myddns_ipv4.domain=yearnsun.3322.org
+uci set ddns.myddns_ipv4.username=yearnsun
+uci set ddns.myddns_ipv4.password=yq19811109
+uci set ddns.myddns_ipv4.interface=wan1
+uci set ddns.myddns_ipv4.ip_network=wan1
+uci commit ddns
+
+uci set dropbear.@dropbear[0].Port=228
+uci commit dropbear
+
+uci add dhcp host
+uci set dhcp.@host[0].name=LibreElec
+uci set dhcp.@host[0].mac=00:e0:4c:68:27:3d
+uci set dhcp.@host[0].ip=192.168.10.100
+uci commit dhcp
+
+/etc/init.d/dnsmasq restart
+
+uci set hd-idle.@hd-idle[0].enabled=1
+uci set hd-idle.@hd-idle[0].disk=sdb
+uci commit hd-idle
+
+uci set system.@system[0].hostname=OpenWrt
+uci set system.system.hostname=OpenWrt
+uci set system.@system[0].timezone=CST-8
+uci set system.@system[0].zonename=Asia/Shanghai
+uci commit system
+
+uci set firewall.@defaults[0].forward=ACCEPT
+uci set firewall.@zone[1].input=ACCEPT
+uci set firewall.@zone[1].forward=ACCEPT
+uci del_list firewall.@zone[1].network=wan
+uci add_list firewall.@zone[1].network=wan1
+uci add_list firewall.@zone[1].network=wan2
+uci add_list firewall.@zone[1].network=wan7
+uci commit firewall
+
+/etc/init.d/firewall restart
+
+uci del_list uhttpd.main.listen_http=0.0.0.0:80
+uci add_list uhttpd.main.listen_http=0.0.0.0:7616
+uci del_list uhttpd.main.listen_http=[::]:80
+uci add_list uhttpd.main.listen_http=[::]:7616
+uci set uhttpd.main.redirect_https=0
+uci set uhttpd.main.rfc1918_filter=0
+uci commit uhttpd
+
+/etc/init.d/uhttpd restart
+
+uci set network.lan.ipaddr=192.168.10.1
+uci rename network.wan=wan1
+uci set network.wan1.proto=pppoe
+uci set network.wan1.username=15236775250
+uci set network.wan1.password=525000
+uci commit network
+
+/etc/init.d/network restart
+
+uci set minidlna.config.db_dir=/mnt/sdb1/.minidlna
+uci set minidlna.config.log_dir=/mnt/sdb1/.minidlna
+uci add_list minidlna.config.media_dir=A,/mnt/sdb1/我的音乐
+uci add_list minidlna.config.media_dir=P,/mnt/sdb1/我的照片
+uci add_list minidlna.config.media_dir=V,/mnt/sdb1/我的视频
+uci commit minidlna
+
+/etc/init.d/minidlna enabled
+/etc/init.d/minidlna start
+
+sed -i 's/SEAHUB_PORT=8000/SEAHUB_PORT=800/g' /etc/config/seafile
+sed -i 's/root::0:0:99999:7:::/root:$1$eUSQFwv7$3lh\/RSILN049US1gkXt0F0:16943:0:99999:7:::/g' /etc/shadow
+
+exit 0
+

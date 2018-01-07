@@ -1,0 +1,431 @@
+diff --git a/CPP/7zip/Archive/Zip/ZipIn.cpp b/CPP/7zip/Archive/Zip/ZipIn.cpp
+index c71c40f..ebc4e76 100644
+--- a/CPP/7zip/Archive/Zip/ZipIn.cpp
++++ b/CPP/7zip/Archive/Zip/ZipIn.cpp
+@@ -16,6 +16,8 @@
+ 
+ #include "ZipIn.h"
+ 
++#include "Common/WinCS.h"
++
+ #define Get16(p) GetUi16(p)
+ #define Get32(p) GetUi32(p)
+ #define Get64(p) GetUi64(p)
+@@ -591,19 +593,31 @@ void CInArchive::Skip64(UInt64 num)
+     ReadByte();
+ }
+ 
+-
+-void CInArchive::ReadFileName(unsigned size, AString &s)
++void CInArchive::ReadFileName(unsigned size, AString &s, int flags)
+ {
+   if (size == 0)
+   {
+     s.Empty();
+     return;
+   }
+-  SafeReadBytes(s.GetBuf(size), size);
++  
++  if (!(CWinCS::should_convert(flags)))
++    SafeReadBytes(s.GetBuf(size), size);
++  else
++  { 
++    char *p = NULL; 
++    AString buf;
++    p = buf.GetBuf(size);
++    SafeReadBytes(p, size);
++    p[size] = 0;
++
++    CWinCS::WinIconv(size, s, p);
++    buf.ReleaseBuf_CalcLen(size);
++    buf.Empty();
++  }
+   s.ReleaseBuf_CalcLen(size);
+ }
+ 
+-
+ bool CInArchive::ReadExtra(unsigned extraSize, CExtraBlock &extraBlock,
+     UInt64 &unpackSize, UInt64 &packSize, UInt64 &localHeaderOffset, UInt32 &diskStartNumber)
+ {
+@@ -709,7 +723,7 @@ bool CInArchive::ReadLocalItem(CItemEx &item)
+   G32(18, item.Size);
+   const unsigned nameSize = Get16(p + 22);
+   const unsigned extraSize = Get16(p + 24);
+-  ReadFileName(nameSize, item.Name);
++  ReadFileName(nameSize, item.Name,  (p[1] == NFileHeader::NHostOS::kUnix));
+   item.LocalFullHeaderSize = kLocalHeaderSize + (UInt32)nameSize + extraSize;
+ 
+   /*
+@@ -1016,7 +1030,7 @@ HRESULT CInArchive::ReadCdItem(CItemEx &item)
+   G16(32, item.InternalAttrib);
+   G32(34, item.ExternalAttrib);
+   G32(38, item.LocalHeaderPos);
+-  ReadFileName(nameSize, item.Name);
++  ReadFileName(nameSize, item.Name, (p[3] == NFileHeader::NHostOS::kUnix));
+   
+   if (extraSize > 0)
+     ReadExtra(extraSize, item.CentralExtra, item.Size, item.PackSize, item.LocalHeaderPos, item.Disk);
+@@ -2128,6 +2142,8 @@ HRESULT CInArchive::Open(IInStream *stream, const UInt64 *searchLimit,
+   
+   bool volWasRequested = false;
+ 
++  CWinCS::get_windows_charset_by_locale();
++
+   if (callback
+       && (startPos == 0 || !searchLimit || *searchLimit != 0))
+   {
+diff --git a/CPP/7zip/Archive/Zip/ZipIn.h b/CPP/7zip/Archive/Zip/ZipIn.h
+index 9b10905..6074a8b 100644
+--- a/CPP/7zip/Archive/Zip/ZipIn.h
++++ b/CPP/7zip/Archive/Zip/ZipIn.h
+@@ -240,7 +240,7 @@ class CInArchive
+   UInt64 ReadUInt64();
+   void Skip(unsigned num);
+   void Skip64(UInt64 num);
+-  void ReadFileName(unsigned nameSize, AString &dest);
++  void ReadFileName(unsigned nameSize, AString &dest, int flags);
+ 
+   bool ReadExtra(unsigned extraSize, CExtraBlock &extraBlock,
+       UInt64 &unpackSize, UInt64 &packSize, UInt64 &localHeaderOffset, UInt32 &diskStartNumber);
+diff --git a/CPP/7zip/Bundles/Alone/makefile.list b/CPP/7zip/Bundles/Alone/makefile.list
+index 1bb8d1c..cb807bc 100644
+--- a/CPP/7zip/Bundles/Alone/makefile.list
++++ b/CPP/7zip/Bundles/Alone/makefile.list
+@@ -626,6 +626,8 @@ ListFileUtils.o : ../../../../CPP/Common/ListFileUtils.cpp
+ 	$(CXX) $(CXXFLAGS) ../../../../CPP/Common/ListFileUtils.cpp
+ MyString.o : ../../../../CPP/Common/MyString.cpp
+ 	$(CXX) $(CXXFLAGS) ../../../../CPP/Common/MyString.cpp
++WinCS.o : ../../../../CPP/Common/WinCS.cpp
++	$(CXX) $(CXXFLAGS) ../../../../CPP/Common/WinCS.cpp
+ MyVector.o : ../../../../CPP/Common/MyVector.cpp
+ 	$(CXX) $(CXXFLAGS) ../../../../CPP/Common/MyVector.cpp
+ MyWindows.o : ../../../../CPP/Common/MyWindows.cpp
+@@ -869,6 +871,7 @@ OBJS=\
+  IntToString.o \
+  ListFileUtils.o \
+  MyString.o \
++ WinCS.o \
+  MyVector.o \
+  MyWindows.o \
+  Sha1Reg.o \
+diff --git a/CPP/Common/WinCS.cpp b/CPP/Common/WinCS.cpp
+new file mode 100644
+index 0000000..47ecf22
+--- /dev/null
++++ b/CPP/Common/WinCS.cpp
+@@ -0,0 +1,282 @@
++#include "StdAfx.h"
++
++#include <langinfo.h>
++#include <iconv.h>
++
++#include "WinCS.h"
++
++static struct CWinCharsetTable charset_table[] = {
++  /* locale       windows */
++  {"C",             "CP1252"},
++  {"POSIX",         "CP1252"},
++  {"aa_DJ",         "CP1252"},
++  {"aa_ER",         "CP1252"},
++  {"aa_ET",         "CP1252"},
++  {"af_ZA",         "CP1252"},
++  {"am_ET",         "CP1252"},
++  {"an_ES",         "CP1252"},
++  {"ar_AE",         "CP1256"},
++  {"ar_BH",         "CP1256"},
++  {"ar_DZ",         "CP1256"},
++  {"ar_EG",         "CP1256"},
++  {"ar_IN",         "CP1256"},
++  {"ar_IQ",         "CP1256"},
++  {"ar_JO",         "CP1256"},
++  {"ar_KW",         "CP1256"},
++  {"ar_LB",         "CP1256"},
++  {"ar_LY",         "CP1256"},
++  {"ar_MA",         "CP1256"},
++  {"ar_OM",         "CP1256"},
++  {"ar_QA",         "CP1256"},
++  {"ar_SA",         "CP1256"},
++  {"ar_SD",         "CP1256"},
++  {"ar_SY",         "CP1256"},
++  {"ar_TN",         "CP1256"},
++  {"ar_YE",         "CP1256"},
++  {"as_IN",         "CP1252"},
++  {"ast_ES",        "CP1252"},
++  {"az_AZ",         "CP1254"},
++  {"be_BY",         "CP1251"},
++  {"ber_DZ",        "CP1252"},
++  {"ber_MA",        "CP1252"},
++  {"bg_BG",         "CP1251"},
++  {"bn_BD",         "CP1252"},
++  {"bn_IN",         "CP1252"},
++  {"bo_CN",         "CP1252"},
++  {"bo_IN",         "CP1252"},
++  {"br_FR",         "CP1252"},
++  {"bs_BA",         "CP1252"},
++  {"byn_ER",        "CP1252"},
++  {"ca_AD",         "CP1252"},
++  {"ca_ES",         "CP1252"},
++  {"ca_FR",         "CP1252"},
++  {"ca_IT",         "CP1252"},
++  {"crh_UA",        "CP1252"},
++  {"cs_CZ",         "CP1250"},
++  {"csb_PL",        "CP1252"},
++  {"cy_GB",      "ISO885914"},
++  {"da_DK",         "CP1252"},
++  {"de_AT",         "CP1252"},
++  {"de_BE",         "CP1252"},
++  {"de_CH",         "CP1252"},
++  {"de_DE",         "CP1252"},
++  {"de_LU",         "CP1252"},
++  {"dz_BT",         "CP1252"},
++  {"el_CY",         "CP1253"},
++  {"el_GR",         "CP1253"},
++  {"en_AG",         "CP1252"},
++  {"en_AU",         "CP1252"},
++  {"en_BW",         "CP1252"},
++  {"en_CA",         "CP1252"},
++  {"en_DK",         "CP1252"},
++  {"en_GB",         "CP1252"},
++  {"en_HK",         "CP1252"},
++  {"en_IE",         "CP1252"},
++  {"en_IN",         "CP1252"},
++  {"en_NG",         "CP1252"},
++  {"en_NZ",         "CP1252"},
++  {"en_PH",         "CP1252"},
++  {"en_SG",         "CP1252"},
++  {"en_US",         "CP1252"},
++  {"en_ZA",         "CP1252"},
++  {"en_ZW",         "CP1252"},
++  {"es_AR",         "CP1252"},
++  {"es_BO",         "CP1252"},
++  {"es_CL",         "CP1252"},
++  {"es_CO",         "CP1252"},
++  {"es_CR",         "CP1252"},
++  {"es_DO",         "CP1252"},
++  {"es_EC",         "CP1252"},
++  {"es_ES",         "CP1252"},
++  {"es_GT",         "CP1252"},
++  {"es_HN",         "CP1252"},
++  {"es_MX",         "CP1252"},
++  {"es_NI",         "CP1252"},
++  {"es_PA",         "CP1252"},
++  {"es_PE",         "CP1252"},
++  {"es_PR",         "CP1252"},
++  {"es_PY",         "CP1252"},
++  {"es_SV",         "CP1252"},
++  {"es_US",         "CP1252"},
++  {"es_UY",         "CP1252"},
++  {"es_VE",         "CP1252"},
++  {"et_EE",         "CP1257"},
++  {"eu_ES",         "CP1252"},
++  {"fa_IR",         "CP1256"},
++  {"fi_FI",         "CP1252"},
++  {"fil_PH",        "CP1252"},
++  {"fo_FO",         "CP1252"},
++  {"fr_BE",         "CP1252"},
++  {"fr_CA",         "CP1252"},
++  {"fr_CH",         "CP1252"},
++  {"fr_FR",         "CP1252"},
++  {"fr_LU",         "CP1252"},
++  {"fur_IT",        "CP1252"},
++  {"fy_DE",         "CP1252"},
++  {"fy_NL",         "CP1252"},
++  {"ga_IE",         "CP1252"},
++  {"gd_GB",         "CP1252"},
++  {"gez_ER",        "CP1252"},
++  {"gez_ET",        "CP1252"},
++  {"gl_ES",         "CP1252"},
++  {"gu_IN",             NULL},
++  {"gv_GB",         "CP1252"},
++  {"ha_NG",         "CP1252"},
++  {"he_IL",         "CP1255"},
++  {"hi_IN",             NULL},
++  {"hne_IN",        "CP1252"},
++  {"hr_HR",         "CP1250"},
++  {"hsb_DE",        "CP1252"},
++  {"ht_HT",         "CP1252"},
++  {"hu_HU",         "CP1250"},
++  {"hy_AM",         "CP1252"},
++  {"id_ID",         "CP1252"},
++  {"ig_NG",         "CP1252"},
++  {"ik_CA",         "CP1252"},
++  {"is_IS",         "CP1252"},
++  {"it_CH",         "CP1252"},
++  {"it_IT",         "CP1252"},
++  {"iu_CA",         "CP1252"},
++  {"iw_IL",         "CP1252"},
++  {"ja_JP",          "CP932"},
++  {"ka_GE",             NULL},
++  {"kk_KZ",         "CP1251"},
++  {"kl_GL",         "CP1252"},
++  {"km_KH",         "CP1252"},
++  {"kn_IN",             NULL},
++  {"ko_KR",          "CP949"},
++  {"ks_IN",         "CP1252"},
++  {"ku_TR",         "CP1252"},
++  {"kw_GB",         "CP1252"},
++  {"ky_KG",         "CP1251"},
++  {"lg_UG",         "CP1252"},
++  {"li_BE",         "CP1252"},
++  {"li_NL",         "CP1252"},
++  {"lo_LA",         "CP1252"},
++  {"lt_LT",         "CP1257"},
++  {"lv_LV",         "CP1257"},
++  {"mai_IN",        "CP1252"},
++  {"mg_MG",         "CP1252"},
++  {"mi_NZ",         "CP1252"},
++  {"mk_MK",         "CP1251"},
++  {"ml_IN",         "CP1252"},
++  {"mn_MN",         "CP1251"},
++  {"mr_IN",             NULL},
++  {"ms_MY",         "CP1252"},
++  {"mt_MT",         "CP1252"},
++  {"nan_TW",        "CP1252"},
++  {"nb_NO",         "CP1252"},
++  {"nds_DE",        "CP1252"},
++  {"nds_NL",        "CP1252"},
++  {"ne_NP",         "CP1252"},
++  {"nl_AW",         "CP1252"},
++  {"nl_BE",         "CP1252"},
++  {"nl_NL",         "CP1252"},
++  {"nn_NO",         "CP1252"},
++  {"no_NO",         "CP1252"},
++  {"nr_ZA",         "CP1252"},
++  {"nso_ZA",        "CP1252"},
++  {"oc_FR",         "CP1252"},
++  {"om_ET",         "CP1252"},
++  {"om_KE",         "CP1252"},
++  {"or_IN",         "CP1252"},
++  {"pa_IN",             NULL},
++  {"pa_PK",             NULL},
++  {"pap_AN",        "CP1252"},
++  {"pl_PL",         "CP1250"},
++  {"pt_BR",         "CP1252"},
++  {"pt_PT",         "CP1252"},
++  {"ro_RO",         "CP1250"},
++  {"ru_RU",         "CP1251"},
++  {"ru_UA",         "CP1251"},
++  {"rw_RW",         "CP1252"},
++  {"sa_IN",             NULL},
++  {"sc_IT",         "CP1252"},
++  {"sd_IN",         "CP1252"},
++  {"se_NO",         "CP1252"},
++  {"shs_CA",        "CP1252"},
++  {"si_LK",         "CP1252"},
++  {"sid_ET",        "CP1252"},
++  {"sk_SK",         "CP1250"},
++  {"sl_SI",         "CP1250"},
++  {"so_DJ",         "CP1252"},
++  {"so_ET",         "CP1252"},
++  {"so_KE",         "CP1252"},
++  {"so_SO",         "CP1252"},
++  {"sq_AL",         "CP1250"},
++  {"sr_ME",         "CP1250"},
++  {"sr_RS",         "CP1250"},
++  {"ss_ZA",         "CP1252"},
++  {"st_ZA",         "CP1252"},
++  {"sv_FI",         "CP1252"},
++  {"sv_SE",         "CP1252"},
++  {"ta_IN",             NULL},
++  {"te_IN",             NULL},
++  {"tg_TJ",         "CP1252"},
++  {"th_TH",         "IBM874"},
++  {"ti_ER",         "CP1252"},
++  {"ti_ET",         "CP1252"},
++  {"tig_ER",        "CP1252"},
++  {"tk_TM",         "CP1252"},
++  {"tl_PH",         "CP1252"},
++  {"tn_ZA",         "CP1252"},
++  {"tr_CY",         "CP1254"},
++  {"tr_TR",         "CP1254"},
++  {"ts_ZA",         "CP1252"},
++  {"tt_RU",         "CP1251"},
++  {"ug_CN",         "CP1252"},
++  {"uk_UA",         "CP1251"},
++  {"ur_PK",         "CP1256"},
++  {"uz_UZ",         "CP1251"},
++  {"ve_ZA",         "CP1252"},
++  {"vi_VN",         "CP1258"},
++  {"wa_BE",         "CP1252"},
++  {"wo_SN",         "CP1252"},
++  {"xh_ZA",         "CP1252"},
++  {"yi_US",         "CP1252"},
++  {"yo_NG",         "CP1252"},
++  {"zh_CN",          "CP936"},
++  {"zh_HK",           "BIG5"},
++  {"zh_SG",          "CP936"},
++  {"zh_TW",           "BIG5"},
++  {"zu_ZA",         "CP1252"}
++};
++
++const char * CWinCS::windowsCharset = NULL;
++const char * CWinCS::localCharset = NULL;
++
++void CWinCS::get_windows_charset_by_locale()
++{
++  char *locale;
++  int i;
++
++  if ((locale = getenv("LC_ALL")) || (locale = getenv("LC_CTYPE")) || (locale = getenv ("LANG")))
++  {
++    for (i = 0; i < sizeof(charset_table) / sizeof(charset_table[0]); i++)
++    {
++      if (!strncmp (locale, charset_table[i].locale, strlen(charset_table[i].locale)))
++      {
++        windowsCharset = charset_table[i].win_cs;
++        break;
++      }
++    }
++  }
++
++  localCharset = nl_langinfo(CODESET);
++} 
++
++bool CWinCS::should_convert(int flags)
++{
++  return (!flags && windowsCharset && localCharset);
++}
++
++void CWinCS::WinIconv(UInt32 nameSize, AString &dest, char *p)
++{
++  iconv_t cd = iconv_open(localCharset, windowsCharset);
++  size_t size = nameSize * 6 + 1;
++  char *p2 = dest.GetBuf(size);
++  size_t size1 = nameSize; 
++  iconv(cd, &p, &size1, &p2, &size);
++  *p2 = 0;
++  iconv_close(cd);
++}
+diff --git a/CPP/Common/WinCS.h b/CPP/Common/WinCS.h
+new file mode 100644
+index 0000000..79b383a
+--- /dev/null
++++ b/CPP/Common/WinCS.h
+@@ -0,0 +1,26 @@
++//Common/WinCS.h
++
++#ifndef __COMMON_WINCS_H
++#define __COMMON_WINCS_H
++
++#include "MyString.h"
++
++struct CWinCharsetTable
++{
++  const char *locale;   /*!< Unix locale name (from glibc) */
++  const char *win_cs;   /*!< windows charset */
++};
++ 
++class CWinCS
++{
++private:
++  static const char *windowsCharset;
++  static const char *localCharset;
++
++public: 
++  static void get_windows_charset_by_locale();
++  static bool should_convert(int flags);
++  static void WinIconv(UInt32 nameSize, AString &dest, char *p);
++};
++ 
++#endif
+
